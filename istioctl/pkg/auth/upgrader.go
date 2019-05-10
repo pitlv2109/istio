@@ -52,15 +52,13 @@ type Upgrader struct {
 	// We could have remove the `service` key layer to make it ServiceRole name maps to workload labels.
 	// However, this is needed for unit tests.
 	RoleNameToWorkloadLabels map[string]ServiceToWorkloadLabels
-	V1PolicyFile             string
+	V1PolicyFiles            []string
 	serviceRoles             []model.Config
 	serviceRoleBindings      []model.Config
 }
 
 const (
 	creationTimestampNilField = "creationTimestamp: null"
-	serviceRoleType           = "service-role"
-	serviceRoleBindingType    = "service-role-binding"
 )
 
 var (
@@ -73,16 +71,16 @@ var (
 
 // UpgradeCRDs is the main function that converts RBAC v1 to v2 for local policy files.
 func (ug *Upgrader) UpgradeCRDs() (string, error) {
-	err := ug.createRoleAndBindingLists(ug.V1PolicyFile)
+	err := ug.getRoleAndBindingLists()
 	var convertedPolicies strings.Builder
 	if err != nil {
 		return "", err
 	}
 	for _, serviceRole := range ug.serviceRoles {
-		if err := ug.addRoleNameToWorkloadLabelMapping(serviceRole); err != nil {
+		if err := ug.addRoleNameToWorkloadLabelMapping(&serviceRole); err != nil {
 			return "", err
 		}
-		role := ug.upgradeServiceRole(serviceRole)
+		role := ug.upgradeServiceRole(&serviceRole)
 		convertedRole, err := parseConfigToString(role)
 		if err != nil {
 			return "", err
@@ -90,11 +88,11 @@ func (ug *Upgrader) UpgradeCRDs() (string, error) {
 		convertedPolicies.WriteString(convertedRole)
 	}
 	for _, serviceRoleBinding := range ug.serviceRoleBindings {
-		authzPolicy, err := ug.createAuthorizationPolicyFromRoleBinding(serviceRoleBinding)
+		authzPolicy, err := ug.createAuthorizationPolicyFromRoleBinding(&serviceRoleBinding)
 		if err != nil {
 			return "", err
 		}
-		convertedAuthzPolicy, err := parseConfigToString(authzPolicy)
+		convertedAuthzPolicy, err := parseConfigToString(&authzPolicy)
 		if err != nil {
 			return "", err
 		}
@@ -104,12 +102,12 @@ func (ug *Upgrader) UpgradeCRDs() (string, error) {
 }
 
 // parseConfigToString parses data from `config` to string.
-func parseConfigToString(config model.Config) (string, error) {
+func parseConfigToString(config *model.Config) (string, error) {
 	schema, exists := configDescriptor.GetByType(config.Type)
 	if !exists {
 		return "", fmt.Errorf("unknown kind %q for %v", crd.ResourceName(config.Type), config.Name)
 	}
-	obj, err := crd.ConvertConfig(schema, config)
+	obj, err := crd.ConvertConfig(schema, *config)
 	if err != nil {
 		return "", fmt.Errorf("could not decode %v: %v", config.Name, err)
 	}
@@ -129,28 +127,19 @@ func parseConfigToString(config model.Config) (string, error) {
 	return configInString.String(), nil
 }
 
-// createRoleAndBindingLists creates lists of model.Configs to store ServiceRole and ServiceRoleBinding policies.
-func (ug *Upgrader) createRoleAndBindingLists(fileName string) error {
-	rbacFileBuf, err := ioutil.ReadFile(fileName)
-	if err != nil {
-		return fmt.Errorf("failed to read file %s", fileName)
-	}
-	configsFromFile, _, err := crd.ParseInputs(string(rbacFileBuf))
+// getRoleAndBindingLists creates lists of model.Configs to store ServiceRole and ServiceRoleBinding policies.
+func (ug *Upgrader) getRoleAndBindingLists() error {
+	configsFromFiles, err := getConfigsFromFiles(ug.V1PolicyFiles)
 	if err != nil {
 		return err
 	}
-	for _, config := range configsFromFile {
-		if config.Type == serviceRoleType {
-			ug.serviceRoles = append(ug.serviceRoles, config)
-		} else if config.Type == serviceRoleBindingType {
-			ug.serviceRoleBindings = append(ug.serviceRoleBindings, config)
-		}
-	}
+	ug.serviceRoles = configsFromFiles[model.ServiceRole.Type]
+	ug.serviceRoleBindings = configsFromFiles[model.ServiceRoleBinding.Type]
 	return nil
 }
 
 // upgradeServiceRole simply removes the `services` field for the serviceRolePolicy.
-func (ug *Upgrader) upgradeServiceRole(serviceRolePolicy model.Config) model.Config {
+func (ug *Upgrader) upgradeServiceRole(serviceRolePolicy *model.Config) *model.Config {
 	serviceRoleSpec := serviceRolePolicy.Spec.(*rbacproto.ServiceRole)
 	for _, rule := range serviceRoleSpec.Rules {
 		if rule.Methods == nil && rule.Paths == nil && rule.Constraints == nil {
@@ -169,7 +158,7 @@ func (ug *Upgrader) upgradeServiceRole(serviceRolePolicy model.Config) model.Con
 //	 * If field `group` exists, change it to use `groups`
 //   * Change `roleRef` to use `role`
 //   * Create a list of binding with one element (serviceRoleBinding) and use workload selector.
-func (ug *Upgrader) createAuthorizationPolicyFromRoleBinding(serviceRoleBinding model.Config) (model.Config, error) {
+func (ug *Upgrader) createAuthorizationPolicyFromRoleBinding(serviceRoleBinding *model.Config) (model.Config, error) {
 	bindingSpec := serviceRoleBinding.Spec.(*rbacproto.ServiceRoleBinding)
 	for _, subject := range bindingSpec.Subjects {
 		if subject.User != "" {
@@ -215,7 +204,7 @@ func (ug *Upgrader) getAndAddRoleNameToWorkloadLabelMapping(roleName, namespace 
 		if serviceRole == nil {
 			return nil, fmt.Errorf("cannot find ServiceRole %q in namespace %q", roleName, namespace)
 		}
-		err := ug.addRoleNameToWorkloadLabelMapping(*serviceRole)
+		err := ug.addRoleNameToWorkloadLabelMapping(serviceRole)
 		if err != nil {
 			return nil, err
 		}
@@ -230,7 +219,7 @@ func (ug *Upgrader) getAndAddRoleNameToWorkloadLabelMapping(roleName, namespace 
 
 // addRoleNameToWorkloadLabelMapping maps the ServiceRole name to workload labels that its rules originally
 // applies to.
-func (ug *Upgrader) addRoleNameToWorkloadLabelMapping(serviceRolePolicy model.Config) error {
+func (ug *Upgrader) addRoleNameToWorkloadLabelMapping(serviceRolePolicy *model.Config) error {
 	roleName := serviceRolePolicy.Name
 	namespace := serviceRolePolicy.Namespace
 	serviceRoleSpec := serviceRolePolicy.Spec.(*rbacproto.ServiceRole)

@@ -26,7 +26,7 @@ const (
 )
 
 type testCases struct {
-	input                string
+	input                []string
 	workloadLabelMapping map[string]ServiceToWorkloadLabels
 	expected             string
 }
@@ -34,7 +34,7 @@ type testCases struct {
 func TestUpgradeLocalFile(t *testing.T) {
 	cases := []testCases{
 		{
-			input: "./testdata/rbac-policies.yaml",
+			input: []string{"./testdata/rbac-policies.yaml"},
 			// Data from the BookExample. productpage.svc.cluster.local is the service with pod label
 			// app: productpage.
 			workloadLabelMapping: map[string]ServiceToWorkloadLabels{
@@ -47,7 +47,7 @@ func TestUpgradeLocalFile(t *testing.T) {
 			expected: "./testdata/rbac-policies-v2.golden.yaml",
 		},
 		{
-			input: "./testdata/rbac-policies-with-methods-and-paths.yaml",
+			input: []string{"./testdata/rbac-policies-with-methods-and-paths.yaml"},
 			// Data from the BookExample. ratings.svc.cluster.local is the service with pod label
 			// app: ratings.
 			workloadLabelMapping: map[string]ServiceToWorkloadLabels{
@@ -63,7 +63,7 @@ func TestUpgradeLocalFile(t *testing.T) {
 
 	for _, tc := range cases {
 		upgrader := Upgrader{
-			V1PolicyFile:             tc.input,
+			V1PolicyFiles:            tc.input,
 			RoleNameToWorkloadLabels: tc.workloadLabelMapping,
 		}
 		gotContent, err := upgrader.UpgradeCRDs()
