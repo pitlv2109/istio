@@ -49,7 +49,7 @@ func TestCheckAndReport(t *testing.T) {
 		}
 		err := validator.CheckAndReport()
 		if err != nil {
-			t.Errorf("test %q failed with error %v", err)
+			t.Errorf("test %q failed with error %v", tc.testName, err)
 		}
 		gotContent := validator.Report.String()
 		if tc.expected != gotContent {
