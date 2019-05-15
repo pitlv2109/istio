@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"strconv"
 	"strings"
 
 	v1 "k8s.io/api/core/v1"
@@ -83,23 +84,28 @@ func (ug *Upgrader) UpgradeCRDs() (string, error) {
 		if err := ug.addRoleNameToWorkloadLabelMapping(serviceRole); err != nil {
 			return "", err
 		}
-		role := ug.upgradeServiceRole(serviceRole)
-		convertedRole, err := parseConfigToString(role)
-		if err != nil {
-			return "", err
+		roles := ug.upgradeServiceRole(serviceRole)
+		for _, role := range roles {
+			fmt.Println("FOO")
+			convertedRole, err := parseConfigToString(role)
+			if err != nil {
+				return "", err
+			}
+			convertedPolicies.WriteString(convertedRole)
 		}
-		convertedPolicies.WriteString(convertedRole)
 	}
 	for _, serviceRoleBinding := range ug.serviceRoleBindings {
-		authzPolicy, err := ug.createAuthorizationPolicyFromRoleBinding(serviceRoleBinding)
+		authzPolicies, err := ug.createAuthorizationPolicyFromRoleBinding(serviceRoleBinding)
 		if err != nil {
 			return "", err
 		}
-		convertedAuthzPolicy, err := parseConfigToString(authzPolicy)
-		if err != nil {
-			return "", err
+		for _, authzPolicy := range authzPolicies {
+			convertedAuthzPolicy, err := parseConfigToString(authzPolicy)
+			if err != nil {
+				return "", err
+			}
+			convertedPolicies.WriteString(convertedAuthzPolicy)
 		}
-		convertedPolicies.WriteString(convertedAuthzPolicy)
 	}
 	return convertedPolicies.String(), nil
 }
@@ -151,16 +157,27 @@ func (ug *Upgrader) createRoleAndBindingLists(fileName string) error {
 }
 
 // upgradeServiceRole simply removes the `services` field for the serviceRolePolicy.
-func (ug *Upgrader) upgradeServiceRole(serviceRolePolicy model.Config) model.Config {
+func (ug *Upgrader) upgradeServiceRole(serviceRolePolicy model.Config) []model.Config {
+	serviceRoles := []model.Config{}
 	serviceRoleSpec := serviceRolePolicy.Spec.(*rbacproto.ServiceRole)
-	for _, rule := range serviceRoleSpec.Rules {
+	for i, rule := range serviceRoleSpec.Rules {
+		serviceRole := rbacproto.ServiceRole{}
+		serviceRole.Rules = append(serviceRole.Rules, rule)
 		if rule.Methods == nil && rule.Paths == nil && rule.Constraints == nil {
 			// If `services` is the only field, we need to create `methods = ["*"]`
-			rule.Methods = []string{"*"}
+			//rule.Methods = []string{"*"}
+			serviceRole.Rules[0].Methods = []string{"*"}
 		}
-		rule.Services = nil
+		//rule.Services = nil
+		serviceRole.Rules[0].Services = nil
+		serviceRoleConfig := model.Config{
+			ConfigMeta: serviceRolePolicy.ConfigMeta,
+			Spec:       &serviceRole,
+		}
+		serviceRoleConfig.Name = fmt.Sprintf("%s-%s", serviceRoleConfig.Name, strconv.Itoa(i))
+		serviceRoles = append(serviceRoles, serviceRoleConfig)
 	}
-	return serviceRolePolicy
+	return serviceRoles
 }
 
 // createAuthorizationPolicyFromRoleBinding creates AuthorizationPolicy from the given ServiceRoleBinding.
@@ -170,7 +187,24 @@ func (ug *Upgrader) upgradeServiceRole(serviceRolePolicy model.Config) model.Con
 //	 * If field `group` exists, change it to use `groups`
 //   * Change `roleRef` to use `role`
 //   * Create a list of binding with one element (serviceRoleBinding) and use workload selector.
-func (ug *Upgrader) createAuthorizationPolicyFromRoleBinding(serviceRoleBinding model.Config) (model.Config, error) {
+func (ug *Upgrader) createAuthorizationPolicyFromRoleBinding(serviceRoleBinding model.Config) ([]model.Config, error) {
+	bindingSpec := serviceRoleBinding.Spec.(*rbacproto.ServiceRoleBinding)
+	authzPolicies := []model.Config{}
+	refRole := ug.getServiceRole(serviceRoleBinding.Namespace, bindingSpec.Role)
+	refRoleSpec := refRole.Spec.(*rbacproto.ServiceRole)
+	for i, rule := range refRoleSpec.Rules {
+		for range rule.Services {
+			authzPolicy, err := ug.constructAuthorizationPolicy(serviceRoleBinding, i)
+			if err != nil {
+				return nil, err
+			}
+			authzPolicies = append(authzPolicies, authzPolicy)
+		}
+	}
+	return authzPolicies, nil
+}
+
+func (ug *Upgrader) constructAuthorizationPolicy(serviceRoleBinding model.Config, ruleIdx int) (model.Config, error) {
 	bindingSpec := serviceRoleBinding.Spec.(*rbacproto.ServiceRoleBinding)
 	for _, subject := range bindingSpec.Subjects {
 		if subject.User != "" {
@@ -182,7 +216,7 @@ func (ug *Upgrader) createAuthorizationPolicyFromRoleBinding(serviceRoleBinding 
 			subject.Group = ""
 		}
 		if bindingSpec.RoleRef != nil {
-			bindingSpec.Role = bindingSpec.RoleRef.Name
+			bindingSpec.Role = fmt.Sprintf("%s-%s", bindingSpec.RoleRef.Name, strconv.Itoa(ruleIdx))
 			bindingSpec.RoleRef = nil
 		}
 	}
