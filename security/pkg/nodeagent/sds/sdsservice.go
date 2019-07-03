@@ -144,6 +144,8 @@ func (s *sdsservice) DeltaSecrets(stream sds.SecretDiscoveryService_DeltaSecrets
 }
 
 func (s *sdsservice) StreamSecrets(stream sds.SecretDiscoveryService_StreamSecretsServer) error {
+	fmt.Println("HELLO WORLD")
+
 	token := ""
 	var ctx context.Context
 
@@ -157,6 +159,7 @@ func (s *sdsservice) StreamSecrets(stream sds.SecretDiscoveryService_StreamSecre
 		// Block until a request is received.
 		select {
 		case discReq, ok := <-reqChannel:
+			fmt.Println(" discReq, ok := <-reqChannel")
 			if !ok {
 				// Remote side closed connection.
 				return receiveError
@@ -210,8 +213,11 @@ func (s *sdsservice) StreamSecrets(stream sds.SecretDiscoveryService_StreamSecre
 			}
 
 			// Update metric for metrics.
-			sdsMetrics.pendingPushPerConn.WithLabelValues(generateResourcePerConnLabel(resourceName, conID)).Inc()
-			sdsMetrics.totalActiveConn.Inc()
+			pendingPushesPerConnMetric := getMetricName(pendingPushesPerConn, resourceName, conID)
+			sdsMetrics.CreateSumMetricAndInc(pendingPushesPerConnMetric,
+				"The number of active SDS connections which are waiting for SDS push.")
+			fmt.Println("ADDED PENDING PUSH for " + pendingPushesPerConnMetric)
+			sdsMetrics.MetricsMap[totalActiveConn].Increment()
 
 			// When nodeagent receives StreamSecrets request, if there is cached secret which matches
 			// request's <token, resourceName, Version>, then this request is a confirmation request.
@@ -259,6 +265,8 @@ func (s *sdsservice) StreamSecrets(stream sds.SecretDiscoveryService_StreamSecre
 				return err
 			}
 		case <-con.pushChannel:
+			fmt.Println("<-con.pushChannel")
+
 			con.mutex.RLock()
 			proxyID := con.proxyID
 			conID := con.conID
@@ -343,11 +351,11 @@ func (s *sdsservice) clearStaledClients() {
 	for _, k := range staledClientKeys {
 		sdsServiceLog.Debugf("remove staled clients %+v", k)
 		delete(sdsClients, k)
+		sdsMetrics.RemoveMetrics(getMetricName(stalePerConn, k.ResourceName, k.ConnectionID))
 	}
 
 	staledClientKeys = staledClientKeys[:0]
-	sdsMetrics.staleConn.Reset()
-	sdsMetrics.totalStaleConn.Set(0)
+	sdsMetrics.MetricsMap[totalStaleConn].Record(0)
 }
 
 // NotifyProxy sends notification to proxy about secret update,
@@ -374,13 +382,17 @@ func NotifyProxy(conID, resourceName string, secret *model.SecretItem) error {
 }
 
 func recycleConnection(conID, resourceName string) {
-	metricLabelName := generateResourcePerConnLabel(resourceName, conID)
-	sdsMetrics.pushPerConn.DeleteLabelValues(metricLabelName)
-	sdsMetrics.pendingPushPerConn.DeleteLabelValues(metricLabelName)
-	sdsMetrics.pushErrorPerConn.DeleteLabelValues(metricLabelName)
-	sdsMetrics.staleConn.WithLabelValues(metricLabelName).Inc()
-	sdsMetrics.totalStaleConn.Inc()
-	sdsMetrics.totalActiveConn.Dec()
+	sdsMetrics.RemoveMetrics(
+		getMetricName(pushesPerConn, resourceName, conID),
+		getMetricName(pendingPushesPerConn, resourceName, conID),
+		getMetricName(pushErrorsPerConn, resourceName, conID),
+		getMetricName(rootCertExpiryTimestampPerConn, resourceName, conID),
+		getMetricName(serverCertExpiryTimestampPerConn, resourceName, conID),
+	)
+	stalePerConnMetric := getMetricName(stalePerConn, resourceName, conID)
+	sdsMetrics.CreateSumMetricAndInc(stalePerConnMetric, "The number of stale SDS connections.")
+	sdsMetrics.MetricsMap[totalStaleConn].Increment()
+	sdsMetrics.MetricsMap[totalActiveConn].Decrement()
 	key := cache.ConnKey{
 		ConnectionID: conID,
 		ResourceName: resourceName,
@@ -452,11 +464,11 @@ func pushSDS(con *sdsConnection) error {
 		return err
 	}
 
-	metricLabelName := generateResourcePerConnLabel(resourceName, conID)
 	if err = con.stream.Send(response); err != nil {
 		sdsServiceLog.Errorf("%s failed to send response: %v", conIDresourceNamePrefix, err)
-		sdsMetrics.pushErrorPerConn.WithLabelValues(metricLabelName).Inc()
-		sdsMetrics.totalPushError.Inc()
+		pushErrorsPerConnMetric := getMetricName(pushErrorsPerConn, resourceName, conID)
+		sdsMetrics.CreateSumMetricAndInc(pushErrorsPerConnMetric, "The number of failed secret pushes to an active SDS connection.")
+		sdsMetrics.MetricsMap[totalPushError].Increment()
 		return err
 	}
 
@@ -465,18 +477,25 @@ func pushSDS(con *sdsConnection) error {
 		sdsServiceLog.Infof("%s pushed root cert to proxy\n", conIDresourceNamePrefix)
 		sdsServiceLog.Debugf("%s pushed root cert %+v to proxy\n", conIDresourceNamePrefix,
 			string(secret.RootCert))
-		sdsMetrics.rootCertExpiryTimestamp.WithLabelValues(metricLabelName).Set(
-			float64(secret.ExpireTime.Unix()))
+		rootCertExpiryTimestampMetric := getMetricName(rootCertExpiryTimestampPerConn, resourceName, conID)
+		sdsMetrics.CreateGaugeMetric(rootCertExpiryTimestampMetric,
+			"The date after which a pushed root certificate expires. Expressed as a Unix Epoch Time.")
+		sdsMetrics.MetricsMap[rootCertExpiryTimestampMetric].Record(float64(secret.ExpireTime.Unix()))
 	} else {
 		sdsServiceLog.Infof("%s pushed key/cert pair to proxy\n", conIDresourceNamePrefix)
 		sdsServiceLog.Debugf("%s pushed certificate chain %+v to proxy\n",
 			conIDresourceNamePrefix, string(secret.CertificateChain))
-		sdsMetrics.serverCertExpiryTimestamp.WithLabelValues(metricLabelName).Set(
-			float64(secret.ExpireTime.Unix()))
+		serverCertExpiryTimestampMetric := getMetricName(serverCertExpiryTimestampPerConn, resourceName, conID)
+		sdsMetrics.CreateGaugeMetric(serverCertExpiryTimestampMetric,
+			"The date after which a pushed server certificate expires. Expressed as a Unix Epoch Time.")
+		sdsMetrics.MetricsMap[serverCertExpiryTimestampMetric].Record(float64(secret.ExpireTime.Unix()))
 	}
-	sdsMetrics.pushPerConn.WithLabelValues(metricLabelName).Inc()
-	sdsMetrics.pendingPushPerConn.WithLabelValues(metricLabelName).Dec()
-	sdsMetrics.totalPush.Inc()
+	pushesPerConnMetric := getMetricName(pushesPerConn, resourceName, conID)
+	sdsMetrics.CreateSumMetricAndInc(pushesPerConnMetric,
+		"The number of secret pushes to an active SDS connection.")
+
+	sdsMetrics.MetricsMap[getMetricName(pendingPushesPerConn, resourceName, conID)].Decrement()
+	sdsMetrics.MetricsMap[totalPush].Increment()
 	return nil
 }
 

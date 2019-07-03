@@ -350,6 +350,7 @@ func validateOptions() error {
 }
 
 func main() {
+	fmt.Println("HELLO WORLD FROM CMD")
 	rootCmd.PersistentFlags().BoolVar(&serverOptions.EnableWorkloadSDS, enableWorkloadSDSFlag,
 		true,
 		"If true, node agent works as SDS server and provisions key/certificate to workload proxies.")
