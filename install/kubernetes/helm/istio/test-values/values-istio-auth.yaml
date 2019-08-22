@@ -4,6 +4,7 @@ global:
   # controlPlaneSecurityEnabled enabled. Will result in delays starting the pods while secrets are
   # propagated, not recommended for tests.
   controlPlaneSecurityEnabled: true
+  controlPlaneAuthPolicyEnabled: true
   
   mtls:
     # Default setting for service-to-service mtls. Can be set explicitly using

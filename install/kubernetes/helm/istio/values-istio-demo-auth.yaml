@@ -5,6 +5,7 @@
 # @include <values-istio-demo-common.yaml>
 global:
   controlPlaneSecurityEnabled: true
+  controlPlaneAuthPolicyEnabled: true
 
   mtls:
     # Default setting for service-to-service mtls. Can be set explicitly using

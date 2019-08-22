@@ -8,6 +8,7 @@ global:
     enabled: true
 
   controlPlaneSecurityEnabled: true
+  controlPlaneAuthPolicyEnabled: true
 
 # Multicluster with gateways requires a root CA
 # Cluster local CAs are bootstrapped with the root CA.

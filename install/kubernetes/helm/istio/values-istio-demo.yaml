@@ -6,7 +6,7 @@
 #
 global:
   controlPlaneSecurityEnabled: false
-
+  controlPlaneAuthPolicyEnabled: false
   mtls:
     # Default setting for service-to-service mtls. Can be set explicitly using
     # destination rules or service annotations.

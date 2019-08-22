@@ -126,7 +126,7 @@
         - istio-policy
         - --templateFile
         - /etc/istio/proxy/envoy_policy.yaml.tmpl
-      {{- if $.Values.global.controlPlaneSecurityEnabled }}
+      {{- if $.Values.global.controlPlaneAuthPolicyEnabled }}
         - --controlPlaneAuthPolicy
         - MUTUAL_TLS
       {{- else }}
@@ -313,7 +313,7 @@
         - istio-telemetry
         - --templateFile
         - /etc/istio/proxy/envoy_telemetry.yaml.tmpl
-      {{- if $.Values.global.controlPlaneSecurityEnabled }}
+      {{- if $.Values.global.controlPlaneAuthPolicyEnabled }}
         - --controlPlaneAuthPolicy
         - MUTUAL_TLS
       {{- else }}

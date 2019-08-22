@@ -3,5 +3,6 @@ global:
     enabled: true
 
   controlPlaneSecurityEnabled: true
+  controlPlaneAuthPolicyEnabled: true
 
   useMCP: false

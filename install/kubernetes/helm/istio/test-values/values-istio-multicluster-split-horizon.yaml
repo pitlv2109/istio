@@ -1,6 +1,7 @@
 # This is used to generate istio-multicluster-split-horizon.yaml, used for CI/CD.
 global:
   controlPlaneSecurityEnabled: true
+  controlPlaneAuthPolicyEnabled: true
   mtls:
     enabled: true
   proxy:

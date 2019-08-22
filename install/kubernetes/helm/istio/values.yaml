@@ -301,6 +301,9 @@ global:
   # propagated, not recommended for tests.
   controlPlaneSecurityEnabled: false
 
+  # controlPlaneAuthPolicyEnabled enabled. This allows Envoy to talk to Pilot in mTLS.
+  controlPlaneAuthPolicyEnabled: false
+
   # disablePolicyChecks disables mixer policy checks.
   # if mixer.policy.enabled==true then disablePolicyChecks has affect.
   # Will set the value with same name in istio config map - pilot needs to be restarted to take effect.

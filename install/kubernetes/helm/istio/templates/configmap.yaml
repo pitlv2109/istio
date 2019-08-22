@@ -267,7 +267,7 @@ data:
 
     {{- $defPilotHostname := printf "istio-pilot.%s" .Release.Namespace }}
     {{- $pilotAddress := .Values.global.remotePilotAddress | default $defPilotHostname }}
-    {{- if .Values.global.controlPlaneSecurityEnabled }}
+    {{- if .Values.global.controlPlaneAuthPolicyEnabled }}
       #
       # Mutual TLS authentication between sidecars and istio control plane.
       controlPlaneAuthPolicy: MUTUAL_TLS
