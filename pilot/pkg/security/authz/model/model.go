@@ -273,4 +273,3 @@ func (m *Model) Generate(service *ServiceMetadata, forTCPFilter bool) *envoy_rba
 	}
 	return policy
 }
-
